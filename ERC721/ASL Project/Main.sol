@@ -77,6 +77,8 @@ contract ASLProject is ERC721, Ownable {
             require(!saleIsPaused, "Sale is not live");
             require(amount + totalSupply <= tokensForPublic, "Cannot exceed max supply");
             require(amount <= maxPerTx, "Cannot mint more than 5 tokens");
+            require(msg.value >= price * amount, "Ether sent is not correct");
+
 
             for (uint256 i; i < amount; i++) { // Mint
                 _safeMint(msg.sender, totalSupply + i);
