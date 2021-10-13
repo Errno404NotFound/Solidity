@@ -11,7 +11,7 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
 
     using MerkleProof for *;
 
-    bytes32 public immutable merkleRoot; // Used for whitelist check
+    bytes32 public merkleRoot; // Used for whitelist check
 
     uint256 public maxSwords = 2222; // Max supply
     uint256 public teamReserved = 50; // 15 for team, 35 for events/giveaways
@@ -27,14 +27,14 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
 
     mapping(address => uint256) public mintedPerAccount; // Minted per whitelisted account
 
-    constructor(string _name, string _tokenName) ERC721(_name, _tokenName) Ownable() ReentrancyGuard() {
+    constructor(string memory _name, string memory _tokenName) ERC721(_name, _tokenName) Ownable() ReentrancyGuard() {
 
     }
 
     // Claim whitelisted tokens using merkle tree
     function claim(uint256 index, address account, uint256 amountReserved, uint256 amountToMint, bytes32[] calldata merkleProof) external {
-        require(merkleRoot, "Root has not yet been set");
         require(block.timestamp >= presaleStartTime, "Presale has not started yet");
+        require(merkleRoot != bytes32(0));
         require(amountToMint + mintedPerAccount[account] < amountReserved, "Cannot mint more than reserved");
 
         // Verify the merkle proof to make sure given information matches whitelist saved info.
@@ -51,7 +51,7 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
     }
 
     // 
-    function mint(uint256 _amount) nonReentrant() public payable {
+    function mint(uint256 _amount) nonReentrant public payable {
         require(totalSupply < maxSwords, "Sale has already ended");
         require(block.timestamp >= mintingStartTime, "Sale has not started yet");
         require(_amount <= maxPerTx, "Cannot mint more than 10 tokens per transaction");
@@ -78,7 +78,7 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
     }
 
     function setMerkleRoot(bytes32 _root) public onlyOwner {
-        require(!merkleRoot, "Root already set, no changes can be made to it.");
+        require(!licenseLocked, "License locked, cannot make changes anymore");
         merkleRoot = _root;
     }
 
