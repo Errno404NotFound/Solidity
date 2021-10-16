@@ -22,7 +22,7 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
     uint256 public presaleStartTime = 1635012000; // Oct 23 2pm est
     
     bool public licenseLocked = false; // Once locked nothing can be changed anymore
-    bool public saleActive = false; // In case anything goes wrong, sales can be paused
+    bool public saleActive = true; // In case anything goes wrong, sales can be paused
     
     string private baseURI; // Site api link for OS to pull metadata from
 
