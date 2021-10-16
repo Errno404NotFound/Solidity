@@ -18,28 +18,30 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
     uint256 public price = .025 ether; 
     uint256 public maxPerTx = 10; 
     uint256 public totalSupply = 0; 
-    uint256 public mintingStartTime = 3093527998799; // Change starting time, currently set to year 99999
-    uint256 public presaleStartTime = 3093527998799; // Change starting time, currently set to year 99999
+    uint256 public mintingStartTime = 1635098400; // Oct 24 2pm est
+    uint256 public presaleStartTime = 1635012000; // Oct 23 2pm est
     
     bool public licenseLocked = false; // Once locked nothing can be changed anymore
+    bool public saleActive = false; // In case anything goes wrong, sales can be paused
     
     string private baseURI; // Site api link for OS to pull metadata from
 
     mapping(address => uint256) public mintedPerAccount; // Minted per whitelisted account
 
     constructor(string memory _name, string memory _tokenName) ERC721(_name, _tokenName) Ownable() ReentrancyGuard() {
-
     }
 
     // Claim whitelisted tokens using merkle tree
-    function claim(uint256 index, address account, uint256 amountReserved, uint256 amountToMint, bytes32[] calldata merkleProof) external {
+    function claim(uint256 index, address account, uint256 amountReserved, uint256 amountToMint, bytes32[] calldata merkleProof) nonReentrant external payable {
         require(block.timestamp >= presaleStartTime, "Presale has not started yet");
+        require(saleActive, "Sale is not currently active.");
         require(merkleRoot != bytes32(0));
-        require(amountToMint + mintedPerAccount[account] < amountReserved, "Cannot mint more than reserved");
+        require(amountToMint + mintedPerAccount[account] <= amountReserved, "Cannot mint more than reserved");
+        require(msg.value >= amountToMint * price, "Amount sent is not correct");
 
         // Verify the merkle proof to make sure given information matches whitelist saved info.
         bytes32 node = keccak256(abi.encodePacked(index, account, amountReserved));
-        require(MerkleProof.verify(merkleProof, merkleRoot, node), "Invalid proof.");
+        require(MerkleProof.verify(merkleProof, merkleRoot, node), "Not whitelisted.");
 
         mintedPerAccount[account] += amountToMint;
         
@@ -50,10 +52,10 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
         totalSupply += amountToMint;
     }
 
-    // 
     function mint(uint256 _amount) nonReentrant public payable {
         require(totalSupply < maxSwords, "Sale has already ended");
         require(block.timestamp >= mintingStartTime, "Sale has not started yet");
+        require(saleActive, "Sale is not currently active.");
         require(_amount <= maxPerTx, "Cannot mint more than 10 tokens per transaction");
         require(totalSupply + _amount <= maxSwords - teamReserved, "Cannot exceed max supply");
         require(msg.value >= price * _amount, "Ether sent is not correct");
@@ -77,6 +79,11 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
         totalSupply += _amount;
     }
 
+    function flipSaleState() public onlyOwner {
+        require(!licenseLocked, "License locked, cannot make changes anymore");
+        saleActive = !saleActive;
+    }
+
     function setMerkleRoot(bytes32 _root) public onlyOwner {
         require(!licenseLocked, "License locked, cannot make changes anymore");
         merkleRoot = _root;
@@ -85,6 +92,11 @@ contract SoDWhitelist is ERC721, Ownable, ReentrancyGuard {
     function setMintingStartTime(uint256 _startTime) public onlyOwner {
          require(!licenseLocked, "License locked, cannot make changes anymore");
          mintingStartTime = _startTime;
+    }
+
+    function setPresaleStartTime(uint256 _startTime) public onlyOwner {
+        require(!licenseLocked, "License locked, cannot make changes anymore");
+        presaleStartTime = _startTime;
     }
     
     function setBaseURI(string memory _newURI) public onlyOwner {
