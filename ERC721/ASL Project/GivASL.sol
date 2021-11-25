@@ -5,60 +5,88 @@ pragma solidity ^0.8.0;
 // All ERC721 files are from openzeppelin as per standard, but names and locations were changed to put them in the same directory
 import "./OpenZeppelin/ERC721.sol";
 import "./OpenZeppelin/Ownable.sol";
-import "./OpenZeppelin/SafeMath.sol";
 import "./OpenZeppelin/Strings.sol";
+import "./OpenZeppelin/ReentrancyGuard.sol";
+import "./OpenZeppelin/MerkleProof.sol";
 
+contract GivASL is ERC721, Ownable, ReentrancyGuard {
 
-contract ASLProject is ERC721, Ownable {
     using Strings for uint256; // Added for testing TokenURI without api
-    using SafeMath for uint256; // Added to split payment, but no longer needed
     
-    uint256 public maxTokens = 100;
-    uint256 public teamReserved = 10;
-    uint256 public price = .05 ether;
-    uint256 public maxPerTx = 5;
-    uint256 public tokensForPublic = 90; // Reservations max, and once sale is public, this is max mintable for public
+    using MerkleProof for *;
+
+    bytes32 public merkleRoot;
+
+    uint256 public maxTokens = 8258;
+    uint256 public teamReserved = 100;
+    uint256 public price = .048 ether;
+    uint256 public maxPerTx = 26;
     uint256 public totalSupply = 0; // Number already minted
-    uint256 public reservationStartTime = 3093527998799; // Change these times. Current epoch time year 99999
+    uint256 public totalReserved = 0; // Amount open to public for reservations
+    uint256 public presaleStartTime = 3093527998799; // Change these times. Current epoch time year 99999
+    uint256 public reservationStartTime = 3093527998799; 
     uint256 public mintingStartTime = 3093527998799;
     uint256 public saleIsPublicTime = 3093527998799;
+    // uint256 public tokensForPublic = 90; // Reservations max, and once sale is public, this is max mintable for public
     
 
-    bool public saleIsPaused = true; // Pause sale
     bool public licenseLocked = false; // No more changes can be made once locked
-    bool public reservationsArePaused = true; // Pause reservations
+    bool public saleActive = true; // Pause sale
+    bool public reservationsActive = true; // Pause reservations
     
     // string public ASL_Provenance = ""; // Set Provenance once calculated
     
     string private baseURI; // Base URI
     
     mapping (address => uint256) allowedTokens; // Mapping to keep track of reservations based on address
+    mapping (address => uint256) mintedPerAccount; // Minted per whitelisted account 
     
-    constructor() ERC721("ASL Project", "ASL") { // Could add more params such as baseURI if api is done before 
-        // Could add optional minting for team right at deployment
+    constructor() ERC721("GivASL", "ASL") Ownable() ReentrancyGuard() { 
+
     }
     
+function claim(uint256 index, address account, uint256 amountReserved, uint256 amountToMint, bytes32[] calldata merkleProof) nonReentrant external payable {
+        require(block.timestamp >= presaleStartTime, "Presale has not started yet");
+        require(saleActive, "Sale is not currently active");
+        require(totalSupply + totalReserved + amountToMint <= maxTokens - teamReserved, "Sale has already ended");
+        require(merkleRoot != bytes32(0), "Whitelist has not been set");
+        require(amountToMint + mintedPerAccount[account] <= amountReserved, "Cannot mint more than reserved");
+        require(msg.value >= amountToMint * price, "Amount sent is not correct");
+
+        // Verify the merkle proof to make sure given information matches whitelist saved info.
+        bytes32 node = keccak256(abi.encodePacked(index, account, amountReserved));
+        require(MerkleProof.verify(merkleProof, merkleRoot, node), "Not whitelisted");
+
+        mintedPerAccount[account] += amountToMint;
+        
+        for (uint256 i = 0; i < amountToMint; i++) {
+            _safeMint(account, totalSupply + i);
+        }
+
+        totalSupply += amountToMint;
+    }
+
     function reserve(uint256 amount) public payable { // Reservations function
         require(block.timestamp < saleIsPublicTime, "Sale is public. Reservations no longer taken"); // Check that sale is not public yet
         require(block.timestamp >= reservationStartTime, "It's not time to reserve tokens yet"); // Check that time is right
-        require(!reservationsArePaused, "Reservations are not live"); // Check that reservations are not paused
-        require(msg.sender==tx.origin,"Only a user may interact with this contract"); // Make sure no contract reserves. Could remove.
-        require(amount <= maxPerTx, "Cannot reserve more than 5 token"); // Check limit per tx
-        require(tokensForPublic - amount >= 0, "Cannot exceed max reserved tokens"); // Stay below total tokens to be reserved
+        require(reservationsActive, "Reservations are not currently active"); // Check that reservations are not paused
+        // require(msg.sender==tx.origin,"Only a user may interact with this contract"); // Make sure no contract reserves. Could remove.
+        require(amount <= maxPerTx, "Cannot reserve more than 26 tokens"); // Check limit per tx
+        require(totalReserved + amount <= maxTokens - teamReserved, "Cannot exceed max supply"); // Stay below total supply
         require(allowedTokens[msg.sender] == 0, "You have already reserved tokens"); // Check that they haven't reserved already. Could remove. 
         require(msg.value >= price * amount, "Ether sent is not correct"); // Check that amount is right
 
         allowedTokens[msg.sender] = amount; // Reserve tokens
 
-        tokensForPublic -= amount; // Decrease available reservations
+        totalReserved += amount;
     }
     
     // Could change to payable
-    function mint(uint256 amount) public payable {
+    function mint(uint256 amount) external payable nonReentrant {
         if (allowedTokens[msg.sender] != 0 || block.timestamp < saleIsPublicTime) // People who reserved before public sale can still mint for free + gas after sale goes live
         {
-            require(block.timestamp >= mintingStartTime, "It's not time to mint yet"); // Check that its minting time
-            require(!saleIsPaused, "Sale is not live"); // Check that sale is not paused
+            require(block.timestamp >= mintingStartTime, "Minting time has not started yet"); // Check that its minting time
+            require(saleActive, "Sale is not currently active"); // Check that sale is not paused
             require(allowedTokens[msg.sender] >= amount, "You can't mint more tokens than you have reserved"); // Can't mint more than reserved
             
             // subtract minted tokens from allowedTokens
@@ -71,14 +99,15 @@ contract ASLProject is ERC721, Ownable {
             
             // Add amount to total minted tokens so far
             totalSupply += amount;
+            totalReserved -= amount;
         }
         else {
-            require(totalSupply <= maxTokens, "Sale has already ended");
-            require(!saleIsPaused, "Sale is not live");
-            require(amount + totalSupply <= tokensForPublic, "Cannot exceed max supply");
+            require(block.timestamp >= mintingStartTime, "Minting time has not started yet"); // Check that its minting time
+            require(saleActive, "Sale is not live");
+            require(totalSupply + totalReserved + amount <= maxTokens - teamReserved, "Sale has already ended");
+            // require(amount + totalSupply <= ., "Cannot exceed max supply");
             require(amount <= maxPerTx, "Cannot mint more than 5 tokens");
             require(msg.value >= price * amount, "Ether sent is not correct");
-
 
             for (uint256 i; i < amount; i++) { // Mint
                 _safeMint(msg.sender, totalSupply + i);
@@ -88,6 +117,11 @@ contract ASLProject is ERC721, Ownable {
         }
     }
     
+    function setPresaleStartTime(uint256 _startTime) public onlyOwner { 
+         require(!licenseLocked, "License locked, cannot make changes anymore");
+         presaleStartTime = _startTime;
+    }
+
     // Set reservation start time
     function setReservationStartTime(uint256 _startTime) public onlyOwner {
          require(!licenseLocked, "License locked, cannot make changes anymore");
@@ -98,6 +132,16 @@ contract ASLProject is ERC721, Ownable {
     function setMintingStartTime(uint256 _startTime) public onlyOwner {
          require(!licenseLocked, "License locked, cannot make changes anymore");
          mintingStartTime = _startTime;
+    }
+
+    function setPublicSaleStartTime(uint256 _startTime) public onlyOwner { 
+         require(!licenseLocked, "License locked, cannot make changes anymore");
+         saleIsPublicTime = _startTime;
+    }
+
+    function setMerkleRoot(bytes32 root) public onlyOwner {
+        require(!licenseLocked, "License locked, cannot make changes anymore");
+        merkleRoot = root;
     }
     
     // Set base URI
@@ -117,13 +161,13 @@ contract ASLProject is ERC721, Ownable {
     // Pause sale in case anything happens
     function flipSaleState() public onlyOwner {
         require(!licenseLocked, "License locked, cannot make changes anymore");
-        saleIsPaused = !saleIsPaused;
+        saleActive = !saleActive;
     }
     
     // Pause reservations in case anything happens
     function flipReservationState() public onlyOwner {
         require(!licenseLocked, "License locked, cannot make changes anymore");
-        reservationsArePaused = !reservationsArePaused;
+        reservationsActive = !reservationsActive;
     }
     
     // Lock license so that no more owner only changes can be made
